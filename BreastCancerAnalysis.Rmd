@@ -1,0 +1,229 @@
+---
+title: "Breast Cancer PCA and QDA Analysis"
+author: "Hansamali Lekamalage"
+date: "2025-12-05"
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+
+```{r}
+library(tidyverse)
+library(MASS)       
+library(factoextra) 
+library(caret)      
+library(biotools)
+library(corrplot)
+```
+
+
+```{r}
+# Load the Wisconsin Breast Cancer Dataset
+data_raw <- read.csv("breastCancer.csv", header = T)
+
+# Separate the Target (Y) and Predictors (X)
+Y <- data_raw$diagnosis 
+X <- data_raw[,-c(1,2)]
+X <- as.data.frame(lapply(X, as.numeric))
+```
+
+
+```{r}
+#Correlation matrix
+corr <- cor(X, use = "pairwise.complete.obs")
+
+corrplot(corr, 
+         method = "color",           
+         type = "full",             
+         tl.col = "black",            
+         tl.cex = 0.6,                
+         tl.srt = 45,                 
+         col = colorRampPalette(c("#2166AC", "#4393C3", "#92C5DE", 
+                                  "#D1E5F0", "#FFFFFF", "#FDDBC7",
+                                  "#F4A582", "#D6604D", "#B2182B"))(200),
+         addCoef.col = "black",       
+         number.cex = 0.45,           
+         number.digits = 2,           # Two decimal places
+         title = "",
+         mar = c(0,0,2,0),            # Margins
+         cl.cex = 0.8)
+```
+
+
+```{r}
+# Split Data for Training and Testing (70/30)
+set.seed(42)
+train_index <- createDataPartition(Y, p = 0.8, list = FALSE)
+
+X_train <- X[train_index, ]
+Y_train <- Y[train_index]
+
+X_test <- X[-train_index, ]
+Y_test <- Y[-train_index]
+```
+
+### Principal Component Analysis (PCA)
+```{r}
+# Run PCA on the standardized TRAINING data
+pca_model <- prcomp(X_train, scale. = T)
+
+# Determine the number of components (k) to retain (e.g., aiming for > 90% variance)
+pca_summary <- summary(pca_model)
+pca_summary
+```
+
+
+```{r}
+eigenvalues <- round(pca_model$sdev^2,3)
+
+# Extract proportion and cumulative proportion
+prop_var <- round(pca_summary$importance[2, ],3)
+cum_prop_var <- round(pca_summary$importance[3, ],3)
+
+# Create a data frame with all columns
+pca_table <- data.frame(
+  PC = paste0("PC", 1:length(eigenvalues)),
+  Eigenvalue = eigenvalues,
+  Proportion = prop_var,
+  Cumulative = cum_prop_var
+)
+pca_table
+```
+
+
+```{r}
+fviz_eig(pca_model)
+```
+
+
+```{r}
+k<-4
+pca_model$rotation[,1:k]
+```
+
+
+```{r}
+# Extract PC Scores for Training and Testing Data
+train_pc_scores <- as.data.frame(pca_model$x[, 1:k])
+train_pc_scores$diagnosis <- Y_train
+
+test_pc_scores <- as.data.frame(predict(pca_model, newdata = X_test)[, 1:k])
+test_pc_scores$diagnosis <- Y_test
+```
+
+### Assumptions 
+```{r}
+# 1. Homogeneity of Covariance Matrices (Check for LDA)
+box_m_result <- boxM(train_pc_scores[, !(names(train_pc_scores) %in% "diagnosis")], 
+                     group = Y_train)
+
+print(box_m_result)
+```
+
+```{r}
+# 2. Multivariate Normality
+
+par(mfrow = c(2, 2)) # Set up a 1-row, 2-column plot layout
+
+# Q-Q Plot for PC1 - Malignant Group (M)
+qqnorm(train_pc_scores$PC1[Y_train == 'M'], 
+       main = "PC1 - Malignant (M) Group")
+qqline(train_pc_scores$PC1[Y_train == 'M'], col = "red", lwd = 2)
+
+
+qqnorm(train_pc_scores$PC1[Y_train == 'B'], 
+       main = "PC1 - Benign (B) Group")
+qqline(train_pc_scores$PC1[Y_train == 'B'], col = "red", lwd = 2)
+
+
+qqnorm(train_pc_scores$PC2[Y_train == 'M'], 
+       main = "PC2 - Malignant (M) Group")
+qqline(train_pc_scores$PC2[Y_train == 'M'], col = "red", lwd = 2)
+
+
+qqnorm(train_pc_scores$PC2[Y_train == 'B'], 
+       main = "PC2 - Benign (B) Group")
+qqline(train_pc_scores$PC2[Y_train == 'B'], col = "red", lwd = 2)
+
+
+qqnorm(train_pc_scores$PC3[Y_train == 'M'], 
+       main = "PC3 - Malignant (M) Group")
+qqline(train_pc_scores$PC3[Y_train == 'M'], col = "red", lwd = 2)
+
+
+qqnorm(train_pc_scores$PC3[Y_train == 'B'], 
+       main = "PC3 - Benign (B) Group")
+qqline(train_pc_scores$PC3[Y_train == 'B'], col = "red", lwd = 2)
+
+qqnorm(train_pc_scores$PC4[Y_train == 'M'], 
+       main = "PC4 - Malignant (M) Group")
+qqline(train_pc_scores$PC4[Y_train == 'M'], col = "red", lwd = 2)
+
+qqnorm(train_pc_scores$PC4[Y_train == 'B'], 
+       main = "PC4 - Benign (B) Group")
+qqline(train_pc_scores$PC4[Y_train == 'B'], col = "red", lwd = 2)
+
+
+```
+
+### Discriminant Analysis (DA) with PC Input 
+
+```{r}
+
+# 3a. Linear Discriminant Analysis (LDA)
+
+lda_pca_model <- lda(diagnosis~., data = train_pc_scores)
+lda_pca_model
+
+# Evaluation
+lda_pca_pred <- lda_pca_model %>% predict(test_pc_scores)
+lda_accuracy <- mean(lda_pca_pred$class == test_pc_scores$diagnosis)
+print(paste("LDA Classification Accuracy:", round(lda_accuracy * 100, 2), "%"))
+
+# Confusion Matrix
+lda_conf_matrix <- table(Actual = test_pc_scores$diagnosis, Predicted = lda_pca_pred$class)
+print(lda_conf_matrix)
+```
+
+
+```{r}
+# 3b. Quadratic Discriminant Analysis (QDA)
+qda_pca_model <- qda(diagnosis~., data = train_pc_scores)
+
+# Evaluation
+qda_pca_pred <- qda_pca_model %>% predict(test_pc_scores)
+qda_accuracy <- mean(qda_pca_pred$class == test_pc_scores$diagnosis)
+print(paste("QDA Classification Accuracy:", round(qda_accuracy * 100, 2), "%"))
+
+# Confusion Matrix
+qda_conf_matrix <- table(Actual = test_pc_scores$diagnosis, Predicted = qda_pca_pred$class)
+print(qda_conf_matrix)
+```
+
+
+```{r}
+# 1. Extract values from the Confusion Matrix
+# Structure: Rows = Actual, Cols = Predicted
+TP <- qda_conf_matrix["M", "M"]  # True Positive (Actual M, Pred M)
+TN <- qda_conf_matrix["B", "B"]  # True Negative (Actual B, Pred B)
+FP <- qda_conf_matrix["B", "M"]  # False Positive (Actual B, Pred M)
+FN <- qda_conf_matrix["M", "B"]  # False Negative (Actual M, Pred B)
+
+# 2. Calculate Metrics
+sensitivity <- TP / (TP + FN)
+specificity <- TN / (TN + FP)
+
+# 3. Print Results
+print(paste("Sensitivity (Recall):", round(sensitivity * 100, 2), "%"))
+print(paste("Specificity:", round(specificity * 100, 2), "%"))
+
+
+```
+
